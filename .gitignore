@@ -1,0 +1,7 @@
+# Ignore build and dependency directories
+cache/
+node_modules/
+build/
+dist/
+.DS_Store
+words.txt
