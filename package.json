@@ -9,6 +9,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "express": "^4.18.2",
     "level": "^8.0.0",
     "vorpal": "^1.12.0"
   }
