@@ -17,7 +17,7 @@ const PartitionModule = {
         paginated_data[current.page] = current.lines
       }
     }
-    return paginated_data
+    return { partitioned_text: paginated_data, total_elements: elements.length }
   }
 }
 

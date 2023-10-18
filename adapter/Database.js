@@ -3,45 +3,68 @@ const { Level } = require('level')
 class Database {
   constructor() {
     if(Database.instance) return Database.instance
-    this.db = new Level('/cache', { valueEncoding: 'json' })
+    this.db = new Level('cache', { valueEncoding: 'json' })
     Database.instance = this
   }
-  async save_bucket(bucket_id, meta, elements = {}) {
-    return await this.db.put(bucket_id, { meta, elements })
-  }
-  async set_child(bucket_id, child_id) {
-    const current_bucket = await this.take.head(bucket_id)
-    await this.save_bucket(child_id, { child: null, last: child_id, size: current_bucket.meta.size })
-    const updated_meta = {
-      ...current_bucket.meta,
-      child: current_bucket.child || child_id,
-      last:  child_id
+  make_transaction(transaction) {
+    transaction.get_workspace = bucket_id => transaction.operations[bucket_id].value
+    transaction.commit = async ()  => {
+      await this.db.batch(Object.values(transaction.operations))
+      transaction.operations = {}
     }
-    await this.db.put(bucket_id, { meta: updated_meta, elements: current_bucket.elements })
-  }
-  async pour(bucket_id, element) {
-    const bucket = await this.take.head(bucket_id)
-    bucket.elements = Object.assign(bucket.elements, element)
-    return await this.db.put(bucket_id, bucket)
-  }
-  take = {
-    head: async bucket_id => {
-      return await this.db.get(bucket_id)
-    },
-    all_children: async bucket_id => {
-      let current_bucket = await this.take.head(bucket_id)
-      let buckets = []
-      while(current_bucket) {
-        buckets.push(current_bucket)
-        if(!current_bucket.meta.child) break
-        current_bucket = await this.take.head(current_bucket.meta.child)
+    transaction.push_operation = operation => {
+      transaction.operations = {
+        ...transaction.operations,
+        [operation.key]: { ...operation }
       }
-      return buckets
-    },
-    last: async bucket_id => {
-      const bucket = await this.take.head(bucket_id)
-      return await this.db.get(bucket.meta.last)
     }
+    transaction.get_last = bucket_id => {
+      const { meta } = transaction.get_workspace(bucket_id)
+      return transaction.get_workspace(meta.last)
+    }
+    transaction.operations = []
+  }
+  store_bucket(bucket_id, meta, elements = {}, { transaction }) {
+    transaction.operations = {
+      ...transaction.operations,
+      [bucket_id]: {
+        type: 'put',
+        key: bucket_id,
+        value: { elements, meta, childs: [] }
+      }
+    }
+  }
+  pour(bucket_id, element, { transaction }) {
+    const working_bucket = transaction.get_workspace(bucket_id)
+    working_bucket.elements = Object.assign(working_bucket.elements, element)
+  }
+  set_child(bucket_id, child_id, { transaction }) {
+    const [bucket_key, _] = bucket_id.toString().split(':')
+    const working_bucket = transaction.get_workspace(bucket_key)
+    working_bucket.childs.push(child_id)
+    working_bucket.meta.last = child_id
+    this.store_bucket(child_id, { ...working_bucket.meta, last: child_id }, undefined, { transaction })
+  }
+  db_operations = {
+    get_meta: async () => {
+      const { meta } = await this.db.get('1')
+      return meta
+    },
+    from_db: async key => {
+      return await this.db.get(key)
+    }
+  }
+  async find(bucket_id, word) {
+    const { elements, childs } = await this.db.get(bucket_id)
+    if(elements[word]) return { page_id: elements[word], node_count: 0 }
+    let node_count = 0
+    for(const collision_id of childs) {
+      const current_bucket = await this.db.get(collision_id)
+      node_count++
+      if(!current_bucket.elements[word]) continue
+      return { page_id: current_bucket.elements[word], node_count }
+    }
+    return {}
   }
 }
 
